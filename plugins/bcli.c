@@ -116,7 +116,8 @@ static const char **gather_args(const tal_t *ctx, const char *cmd, const char **
 	if (bitcoind->rpcpass)
 		add_arg(&args,
 			tal_fmt(args, "-rpcpassword=%s", bitcoind->rpcpass));
-
+	
+	add_arg(&args, "-rpcwait");
 	add_arg(&args, cmd);
 	for (size_t i = 0; i < tal_count(cmd_args); i++)
 		add_arg(&args, cmd_args[i]);
@@ -821,52 +822,20 @@ static void wait_and_check_bitcoind(struct plugin *p)
 	const char **cmd = gather_args(bitcoind, "getnetworkinfo", NULL);
 	bool printed = false;
 	char *output = NULL;
-
-	for (;;) {
-		tal_free(output);
-
-		child = pipecmdarr(NULL, &from, &from, cast_const2(char **,cmd));
-		if (child < 0) {
-			if (errno == ENOENT)
-				bitcoind_failure(p, "bitcoin-cli not found. Is bitcoin-cli "
-						    "(part of Bitcoin Core) available in your PATH?");
-			plugin_err(p, "%s exec failed: %s", cmd[0], strerror(errno));
-		}
-
-		output = grab_fd(cmd, from);
-
-		while ((ret = waitpid(child, &status, 0)) < 0 && errno == EINTR);
-		if (ret != child)
-			bitcoind_failure(p, tal_fmt(bitcoind, "Waiting for %s: %s",
-						    cmd[0], strerror(errno)));
-		if (!WIFEXITED(status))
-			bitcoind_failure(p, tal_fmt(bitcoind, "Death of %s: signal %i",
-						   cmd[0], WTERMSIG(status)));
-
-		if (WEXITSTATUS(status) == 0)
-			break;
-
-		/* bitcoin/src/rpc/protocol.h:
-		 *	RPC_IN_WARMUP = -28, //!< Client still warming up
-		 */
-		if (WEXITSTATUS(status) != 28) {
-			if (WEXITSTATUS(status) == 1)
-				bitcoind_failure(p, "Could not connect to bitcoind using"
-						    " bitcoin-cli. Is bitcoind running?");
-			bitcoind_failure(p, tal_fmt(bitcoind, "%s exited with code %i: %s",
-						    cmd[0], WEXITSTATUS(status), output));
-		}
-
-		if (!printed) {
-			plugin_log(p, LOG_UNUSUAL,
-				   "Waiting for bitcoind to warm up...");
-			printed = true;
-		}
-		sleep(1);
+	
+	child = pipecmdarr(NULL, &from, &from, cast_const2(char **,cmd));
+	if (child < 0) {
+		if (errno == ENOENT)
+			bitcoind_failure(p, "bitcoin-cli not found. Is bitcoin-cli "
+					    "(part of Bitcoin Core) available in your PATH?");
+		plugin_err(p, "%s exec failed: %s", cmd[0], strerror(errno));
 	}
 
-	parse_getnetworkinfo_result(p, output);
+	output = grab_fd(cmd, from);
 
+	parse_getnetworkinfo_result(p, output);
+	
+	tal_free(output);
 	tal_free(cmd);
 }
 
